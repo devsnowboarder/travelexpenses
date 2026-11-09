@@ -1,20 +1,24 @@
 import os
+import sys
 import webbrowser
 import pandas as pd
 
-# --- Configuration ---
-people_names = ['Aileen', 'Michael']  # Add all travelers here
+# 2. Define people_names before joining it
+traveler = sys.argv[1] if len(sys.argv) > 1 else 'Aileen'
+
+people_names = [traveler, 'Michael']
 krw_per_usd = 1350.0
 
-file_path = '/Users/michaellau/python2024/expenses/South_Korea_Trip2026_Expense_Tracker.tsv'
+# Point to your .csv file instead of .tsv
+file_path = '/Users/michaellau/python2024/expenses/South_Korea_Trip2026_Expense_Tracker.csv'
 output_dir = '/Users/michaellau/python2024/expenses'
 
-# Dynamically name the file based on person_name(s) (e.g., "Jocel.html" or "Jocel_Michael.html")
+# Dynamically name the file based on person_name(s) (e.g., "Aileen_Michael.html")
 filename_base = "_".join(people_names)
 output_html_path = os.path.join(output_dir, f'{filename_base}.html')
 
-# Load the TSV file once
-df = pd.read_csv(file_path, sep='\t')
+# Load the CSV file (default delimiter is comma ',')
+df = pd.read_csv(file_path)
 cols = ['Unnamed: 4', 'Unnamed: 5', 'Unnamed: 6', 'Unnamed: 16']
 
 # Accumulators for the master report
@@ -26,7 +30,7 @@ for person_name in people_names:
     # 1. Filter dynamically by person name
     person_expenses = df[
         df['Unnamed: 5'].astype(str).str.strip().str.lower() == person_name.strip().lower()
-        ].copy()
+    ].copy()
 
     # 2. Clean 'Unnamed: 16' and convert to numeric float
     person_expenses['Amount_Cleaned_16'] = (
@@ -39,7 +43,7 @@ for person_name in people_names:
     # 3. Filter OUT rows where Michael's amount is NaN or empty
     person_expenses = person_expenses[
         person_expenses['Amount_Cleaned_16'].notna() & (person_expenses['Amount_Cleaned_16'] > 0)
-        ].copy()
+    ].copy()
 
     # Skip if no valid expenses are found for this person
     if person_expenses.empty:
@@ -172,8 +176,8 @@ html_content = f"""<!DOCTYPE html>
         /* Highlight Total Row at the bottom */
         table.table tr:last-child {{
             font-weight: bold;
-            color: #ffffff;             /* White text for contrast */
-            background-color: #007bff;  /* Bold blue background */
+            color: #ffffff;
+            background-color: #007bff;
             border-top: 2px solid #0056b3;
         }}
     </style>
@@ -181,7 +185,7 @@ html_content = f"""<!DOCTYPE html>
 <body>
     <h1>South Korea Trip 2026 - Expense Report ({", ".join(people_names)})</h1>
     <div class="grand-summary-card">
-       <p><strong>Combined Grand Total (Michael):</strong> ${(grand_total_krw / 1350.0):,.2f} USD</p>
+       <p><strong>Combined Grand Total (Michael):</strong> &#8361;{grand_total_krw:,.2f} KRW</p>
         <p><strong>Combined Grand Total USD:</strong> ${grand_total_usd:,.2f} (Rate: {krw_per_usd:,.0f} KRW/USD)</p>
     </div>
     <hr class="divider">
