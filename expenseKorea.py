@@ -1,201 +1,156 @@
 import os
 import sys
 import webbrowser
+from pathlib import Path
 import pandas as pd
 
-# 2. Define people_names before joining it
-traveler = sys.argv[1] if len(sys.argv) > 1 else 'Aileen'
+# 1. Determine traveler name from command-line argument (defaults to 'Aileen' if run directly in PyCharm)
+if len(sys.argv) > 1:
+    person1 = sys.argv[1].strip()
+else:
+    person1 = 'Aileen'
 
-people_names = [traveler, 'Michael']
+person2 = 'Michael'
 krw_per_usd = 1350.0
 
-# Point to your .csv file instead of .tsv
-file_path = '/Users/michaellau/python2024/expenses/South_Korea_Trip2026_Expense_Tracker.csv'
-output_dir = '/Users/michaellau/python2024/expenses'
+# 2. Dynamically point to the CSV in the same directory as expenseKorea.py
+base_dir = Path(__file__).resolve().parent
+file_path = base_dir / 'South_Korea_Trip2026_Expense_Tracker.csv'
 
-# Dynamically name the file based on person_name(s) (e.g., "Aileen_Michael.html")
-filename_base = "_".join(people_names)
-output_html_path = os.path.join(output_dir, f'{filename_base}.html')
-
-# Load the CSV file (default delimiter is comma ',')
+# 3. Read the CSV file
 df = pd.read_csv(file_path)
-cols = ['Unnamed: 4', 'Unnamed: 5', 'Unnamed: 6', 'Unnamed: 16']
 
-# Accumulators for the master report
-person_sections_html = []
-grand_total_krw = 0.0
+# 4. Extract and rename the target columns (Unnamed: 4, 5, 6, and 16)
+cols_to_use = ['Unnamed: 4', 'Unnamed: 5', 'Unnamed: 6', 'Unnamed: 16']
+subset = df[cols_to_use].copy()
+subset.columns = ['Items', person1, 'expenses', person2]
 
-# --- Loop through each person ---
-for person_name in people_names:
-    # 1. Filter dynamically by person name
-    person_expenses = df[
-        df['Unnamed: 5'].astype(str).str.strip().str.lower() == person_name.strip().lower()
-    ].copy()
+# 5. Strip whitespace and filter rows matching person1 and valid entries for Michael
+subset[person1] = subset[person1].astype(str).str.strip()
+filtered = subset[
+    (subset[person1].str.lower() == person1.lower()) &
+    (subset[person2].notna())
+].copy()
 
-    # 2. Clean 'Unnamed: 16' and convert to numeric float
-    person_expenses['Amount_Cleaned_16'] = (
-        person_expenses['Unnamed: 16']
-        .astype(str)
-        .str.replace(r'[^\d.-]', '', regex=True)
-    )
-    person_expenses['Amount_Cleaned_16'] = pd.to_numeric(person_expenses['Amount_Cleaned_16'], errors='coerce')
+# 6. Helper function to clean currency formatting ($, ₩, commas, spaces)
+def clean_currency(val):
+    if pd.isna(val):
+        return 0.0
+    s = str(val).replace(',', '').replace('$', '').replace('₩', '').strip()
+    try:
+        return float(s)
+    except ValueError:
+        return 0.0
 
-    # 3. Filter OUT rows where Michael's amount is NaN or empty
-    person_expenses = person_expenses[
-        person_expenses['Amount_Cleaned_16'].notna() & (person_expenses['Amount_Cleaned_16'] > 0)
-    ].copy()
+filtered['expenses_num'] = filtered['expenses'].apply(clean_currency)
+filtered['person2_num'] = filtered[person2].apply(clean_currency)
 
-    # Skip if no valid expenses are found for this person
-    if person_expenses.empty:
-        print(f"No valid expenses found for {person_name}. Skipping...")
-        continue
+# Skip rows where Michael's numeric share is 0 or invalid
+filtered = filtered[filtered['person2_num'] != 0].copy()
 
-    # 4. Calculate sums and conversions
-    sum_unnamed_16 = person_expenses['Amount_Cleaned_16'].sum()
-    total_usd = sum_unnamed_16 / krw_per_usd
-    grand_total_krw += sum_unnamed_16
+# 7. Calculate totals in KRW and USD
+total_expenses_krw = filtered['expenses_num'].sum()
+total_person2_krw = filtered['person2_num'].sum()
 
-    # 5. Format display DataFrame with renamed columns
-    rename_map = {
-        'Unnamed: 4': 'Items',
-        'Unnamed: 5': person_name,
-        'Unnamed: 6': 'Expenses',
-        'Unnamed: 16': 'Michael'
+total_expenses_usd = total_expenses_krw / krw_per_usd
+total_person2_usd = total_person2_krw / krw_per_usd
+
+# Format display columns to 2 decimal places
+filtered['expenses'] = filtered['expenses_num'].map(lambda x: f"{x:,.2f}")
+filtered[person2] = filtered['person2_num'].map(lambda x: f"{x:,.2f}")
+
+# Keep only the 4 display columns
+display_df = filtered[['Items', person1, 'expenses', person2]].copy()
+
+# 8. Append Total (KRW) and Total (USD) summary rows at the bottom
+total_rows = pd.DataFrame([
+    {
+        'Items': 'Total (KRW)',
+        person1: '',
+        'expenses': f"{total_expenses_krw:,.2f}",
+        person2: f"{total_person2_krw:,.2f}"
+    },
+    {
+        'Items': f'Total (USD @ {krw_per_usd:,.0f})',
+        person1: '',
+        'expenses': f"${total_expenses_usd:,.2f}",
+        person2: f"${total_person2_usd:,.2f}"
     }
-    display_df = person_expenses[cols].rename(columns=rename_map).copy()
+])
 
-    # 6. Format numbers with comma separators and 2 decimal places
-    display_df['Michael'] = person_expenses['Amount_Cleaned_16'].map('{:,.2f}'.format)
+final_df = pd.concat([display_df, total_rows], ignore_index=True)
 
-    # 7. Append a summary 'Total' row directly into the bottom of the table
-    total_row = pd.DataFrame([{
-        'Items': 'Total',
-        person_name: '',
-        'Expenses': '',
-        'Michael': f"{sum_unnamed_16:,.2f}"
-    }])
-    display_df = pd.concat([display_df, total_row], ignore_index=True)
+# 9. Build styled HTML report
+html_table = final_df.to_html(index=False, classes='expense-table', border=0)
 
-    # Generate HTML table for this person and append to our sections list
-    table_html = display_df.to_html(classes='table', index=False)
-
-    section_html = f"""
-    <div class="person-section">
-        <h2>{person_name}'s Expenses</h2>
-        <div class="summary-card">
-            <p><strong>Total KRW (Michael):</strong> &#8361;{sum_unnamed_16:,.2f}</p>
-            <p><strong>Total USD:</strong> ${total_usd:,.2f} (Rate: {krw_per_usd:,.0f} KRW/USD)</p>
-        </div>
-        {table_html}
-    </div>
-    """
-    person_sections_html.append(section_html)
-
-# Calculate combined grand total in USD
-grand_total_usd = grand_total_krw / krw_per_usd
-all_sections_combined = "\n<hr class='divider'>\n".join(person_sections_html)
-
-# --- Build Master HTML ---
 html_content = f"""<!DOCTYPE html>
-<html>
+<html lang="en">
 <head>
-    <meta charset="utf-8">
-    <title>Expense Report - {filename_base}</title>
+    <meta charset="UTF-8">
+    <title>{person1} & {person2} - South Korea 2026 Expenses</title>
     <style>
         body {{
-            font-family: -apple-system, BlinkMacSystemFont, "Segoe UI", Roboto, Helvetica, Arial, sans-serif;
+            font-family: -apple-system, BlinkMacSystemFont, "Segoe UI", Roboto, Arial, sans-serif;
             margin: 30px;
-            color: #333;
+            background-color: #f9fafb;
+            color: #1f2937;
         }}
-        h1 {{ color: #1a252f; margin-bottom: 10px; }}
-        h2 {{ color: #2c3e50; margin-top: 0; }}
-
-        .grand-summary-card {{
-            background: #eaf2f8;
-            border-left: 5px solid #2980b9;
-            padding: 15px 22px;
-            margin-bottom: 30px;
-            width: fit-content;
-            border-radius: 4px;
+        h2 {{
+            margin-bottom: 5px;
         }}
-        .grand-summary-card p {{ margin: 6px 0; font-size: 16px; }}
-
-        .summary-card {{
-            background: #f8f9fa;
-            border-left: 4px solid #3498db;
-            padding: 12px 18px;
-            margin-bottom: 15px;
-            width: fit-content;
+        .subtitle {{
+            color: #6b7280;
+            margin-bottom: 20px;
+            font-size: 0.95rem;
         }}
-        .summary-card p {{ margin: 6px 0; font-size: 15px; }}
-
-        .person-section {{
-            margin-bottom: 35px;
-        }}
-        hr.divider {{
-            border: 0;
-            border-top: 1px solid #ccc;
-            margin: 35px 0;
-        }}
-
-        /* Table Layout */
-        table.table {{
+        table.expense-table {{
             border-collapse: collapse;
-            margin-top: 15px;
             width: auto;
+            background: #ffffff;
+            box-shadow: 0 1px 3px rgba(0,0,0,0.1);
         }}
-        table.table th, table.table td {{
-            border: 1px solid #ddd;
+        table.expense-table th, table.expense-table td {{
+            border: 1px solid #e5e7eb;
             padding: 8px 14px;
+            white-space: nowrap;
+        }}
+        table.expense-table th {{
+            background-color: #f3f4f6;
+            font-weight: 600;
             text-align: left;
         }}
-
-        /* Keep Items (col 1) and Person (col 2) close together */
-        table.table th:nth-child(1), table.table td:nth-child(1) {{
-            padding-right: 6px;
-            white-space: nowrap;
-        }}
-        table.table th:nth-child(2), table.table td:nth-child(2) {{
-            padding-left: 6px;
-            padding-right: 18px;
-            white-space: nowrap;
-        }}
-
-        /* Right-align amounts */
-        table.table th:nth-child(3), table.table td:nth-child(3),
-        table.table th:nth-child(4), table.table td:nth-child(4) {{
+        /* Right-align numeric expense columns (columns 3 and 4) */
+        table.expense-table td:nth-child(3),
+        table.expense-table td:nth-child(4),
+        table.expense-table th:nth-child(3),
+        table.expense-table th:nth-child(4) {{
             text-align: right;
+            font-variant-numeric: tabular-nums;
         }}
-
-        table.table th {{
-            background-color: #2c3e50;
-            color: white;
-        }}
-        table.table tr:nth-child(even):not(:last-child) {{ background-color: #f2f2f2; }}
-
-        /* Highlight Total Row at the bottom */
-        table.table tr:last-child {{
+        /* Bold the bottom two total rows */
+        table.expense-table tr:nth-last-child(1),
+        table.expense-table tr:nth-last-child(2) {{
             font-weight: bold;
-            color: #ffffff;
-            background-color: #007bff;
-            border-top: 2px solid #0056b3;
+            background-color: #f9fafb;
+        }}
+        table.expense-table tr:nth-last-child(1) {{
+            background-color: #eef2ff;
         }}
     </style>
 </head>
 <body>
-    <h1>South Korea Trip 2026 - Expense Report ({", ".join(people_names)})</h1>
-    <div class="grand-summary-card">
-       <p><strong>Combined Grand Total (Michael):</strong> &#8361;{grand_total_krw:,.2f} KRW</p>
-        <p><strong>Combined Grand Total USD:</strong> ${grand_total_usd:,.2f} (Rate: {krw_per_usd:,.0f} KRW/USD)</p>
-    </div>
-    <hr class="divider">
-    {all_sections_combined}
+    <h2>South Korea 2026 Expense Report: {person1} & {person2}</h2>
+    <div class="subtitle">Exchange Rate: {krw_per_usd:,.0f} KRW = 1 USD</div>
+    {html_table}
 </body>
 </html>
 """
 
-with open(output_html_path, 'w', encoding='utf-8') as f:
-    f.write(html_content)
+# 10. Save the HTML file in the same directory as expenseKorea.py
+output_file = base_dir / f"{person1}_{person2}.html"
+output_file.write_text(html_content, encoding='utf-8')
+print(f"Saved report: {output_file.name} | {person2} Total: {total_person2_krw:,.2f} KRW (${total_person2_usd:,.2f} USD)")
 
-print(f"HTML report saved to: {output_html_path}")
-webbrowser.open(f"file://{os.path.abspath(output_html_path)}")
+# Optional: Only auto-open in browser when run interactively without a batch flag
+if os.environ.get("BATCH_RUN") != "1":
+    webbrowser.open(f"file://{output_file}")
